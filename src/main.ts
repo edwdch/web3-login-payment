@@ -1,4 +1,8 @@
 import './assets/main.css'
+import { Buffer } from 'buffer'
+
+// Polyfill Buffer for the browser
+globalThis.Buffer = Buffer
 
 import { createApp } from 'vue'
 import App from './App.vue'
