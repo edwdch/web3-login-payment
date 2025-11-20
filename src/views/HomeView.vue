@@ -167,6 +167,25 @@ async function ensureNetwork(provider: BrowserProvider, config: ChainConfig) {
 }
 
 /**
+ * 将交易哈希包装成 x402 协议要求的 Base64 JSON 格式
+ */
+function createPaymentToken(txHash: string, chainId: number) {
+  // 1. 构造对象：x402 的 exact 模式通常至少需要 hash
+  //有些实现可能还需要 chainId，带上比较保险
+  const payload = {
+    hash: txHash,
+    chainId: chainId 
+  }
+
+  // 2. 序列化为 JSON 字符串
+  const jsonString = JSON.stringify(payload)
+
+  // 3. 转为 Base64 (浏览器原生方法)
+  // 解决中文或特殊字符可能导致的编码问题（虽然 hash 里没有，但为了通用性）
+  return window.btoa(jsonString)
+}
+
+/**
  * 执行链上支付通用逻辑
  */
 async function executePayment(option: X402Option, config: ChainConfig) {
@@ -180,9 +199,21 @@ async function executePayment(option: X402Option, config: ChainConfig) {
   const signer = await provider.getSigner()
 
   // 2. 实例化 Token 合约 (Generic ERC20 ABI)
-  const erc20Abi = ['function transfer(address to, uint256 amount) returns (bool)']
+  const erc20Abi = [
+    'function transfer(address to, uint256 amount) returns (bool)',
+    'function balanceOf(address owner) view returns (uint256)'
+  ]
   // 使用 API 返回的 asset (Token Address)
-  const tokenContract = new Contract(option.asset, erc20Abi, signer)
+  const tokenContract = new Contract(option.asset, erc20Abi, signer) as any
+
+  // 2.1 检查余额 (Pre-flight Check)
+  const userAddress = await signer.getAddress()
+  const balance = await tokenContract.balanceOf(userAddress)
+  const requiredAmount = BigInt(option.maxAmountRequired)
+  
+  if (balance < requiredAmount) {
+    throw new Error(`Insufficient Token Balance. You need ${requiredAmount} units of the token, but you only have ${balance}.`)
+  }
 
   console.log(`[Payment] Paying ${option.maxAmountRequired} to ${option.payTo} on ${config.chainName}`)
 
@@ -240,10 +271,11 @@ async function handlePayment(plan: string) {
         const txHash = await executePayment(option, config)
         console.log('Payment successful, Hash:', txHash)
 
+        const paymentToken = createPaymentToken(txHash, config.chainIdDec)
         // 3. 携带支付凭证重试请求
         const retryRes = await api.get(`/payment/${plan}`, {
           headers: {
-            'X-Payment': txHash
+            'X-Payment': paymentToken
           }
         })
 
