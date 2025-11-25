@@ -6,29 +6,66 @@ import { SiweMessage } from 'siwe'
 import axios, { type AxiosResponse } from 'axios'
 import { withPaymentInterceptor } from 'x402-axios'
 
-const user = ref<any>(null)
+// Ethereum provider type
+interface EthereumProvider {
+  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>
+  on?: (event: string, handler: (...args: unknown[]) => void) => void
+  removeListener?: (event: string, handler: (...args: unknown[]) => void) => void
+}
+
+declare global {
+  interface Window {
+    ethereum?: EthereumProvider
+  }
+}
+
+interface User {
+  publicAddress: string
+  id?: string | number
+}
+
+const user = ref<User | null>(null)
 const loading = ref(false)
 const error = ref('')
 
-// API 实例
+// Payment period config
+type PaymentPeriod = 'monthly' | 'quarterly' | 'yearly'
+
+interface PeriodOption {
+  key: PaymentPeriod
+  label: string
+  price: string
+  days: number
+  discount?: string
+}
+
+const periodOptions: PeriodOption[] = [
+  { key: 'monthly', label: 'Monthly', price: '20.00', days: 30 },
+  { key: 'quarterly', label: 'Quarterly', price: '54.00', days: 90, discount: '10% off' },
+  { key: 'yearly', label: 'Yearly', price: '200.00', days: 365, discount: '17% off' },
+]
+
+const selectedPeriod = ref<PaymentPeriod>('monthly')
+
+// API instance
 const api = axios.create({
-  baseURL: '/api', // 请根据实际后端地址修改
+  baseURL: '/api', // Modify according to actual backend address
   withCredentials: true
 })
 
-// 初始化 x402-axios
+// Initialize x402-axios
 let walletClient: WalletClient | null = null
 let interceptorInstalled = false
 
 function setupWallet(address: string) {
-  if (typeof window === 'undefined' || !(window as any).ethereum) return
+  if (typeof window === 'undefined' || !window.ethereum) return
 
   walletClient = createWalletClient({
     account: address as `0x${string}`,
     chain: baseSepolia,
-    transport: custom((window as any).ethereum)
+    transport: custom(window.ethereum)
   })
-  
+
   if (!interceptorInstalled) {
     // 添加支付拦截器
     // @ts-expect-error: x402-axios types might mismatch slightly with viem version or strictness
@@ -50,16 +87,16 @@ async function checkSession() {
   try {
     const res = await api.get('/user/me')
     user.value = getResponseData(res).user
-    
-    // 如果用户已登录，尝试静默恢复钱包连接
-    if (user.value && (window as any).ethereum) {
+
+    // If user is logged in, try to silently restore wallet connection
+    if (user.value && window.ethereum) {
       const tempClient = createWalletClient({
-        transport: custom((window as any).ethereum)
+        transport: custom(window.ethereum)
       })
-      // 尝试获取当前连接的账户（不弹窗）
-      // 注意：viem 的 requestAddresses 会调用 eth_requestAccounts，如果未授权会弹窗
-      // 这里我们假设用户之前授权过，或者我们只在点击支付时才强制连接
-      // 为了更好的体验，我们可以尝试获取账户，如果获取到了就 setupWallet
+      // Try to get currently connected account (no popup)
+      // Note: viem's requestAddresses calls eth_requestAccounts, will popup if not authorized
+      // Here we assume user authorized before, or we only force connect when clicking pay
+      // For better UX, try to get account, if successful then setupWallet
       try {
          const [address] = await tempClient.requestAddresses()
          if (address) {
@@ -78,19 +115,19 @@ async function connectAndLogin() {
   error.value = ''
   loading.value = true
   try {
-    if (!(window as any).ethereum) throw new Error('Please install MetaMask.')
+    if (!window.ethereum) throw new Error('Please install MetaMask.')
 
-    // 1. 获取地址 (使用临时 client)
+    // 1. Get address (using temporary client)
     const tempClient = createWalletClient({
       chain: baseSepolia,
-      transport: custom((window as any).ethereum)
+      transport: custom(window.ethereum)
     })
     const [address] = await tempClient.requestAddresses()
     if (!address) throw new Error('No account found')
 
-    // 2. 初始化正式的 walletClient (带 account) 并安装拦截器
+    // 2. Initialize official walletClient (with account) and install interceptor
     setupWallet(address)
-    
+
     if (!walletClient) throw new Error('Wallet initialization failed')
 
     const chainId = await walletClient.getChainId()
@@ -112,18 +149,19 @@ async function connectAndLogin() {
 
     const preparedMessage = message.prepareMessage()
     // 使用 viem 签名
-    const signature = await walletClient.signMessage({ 
+    const signature = await walletClient.signMessage({
       account: address,
-      message: preparedMessage 
+      message: preparedMessage
     })
 
     // 5. Verify
     const verifyRes = await api.post('/user/verify', { message: preparedMessage, signature })
     user.value = getResponseData(verifyRes).user
 
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error(err)
-    error.value = err.response?.data?.error || err.message || 'Login failed'
+    const axiosErr = err as { response?: { data?: { error?: string } }; message?: string }
+    error.value = axiosErr.response?.data?.error || axiosErr.message || 'Login failed'
   } finally {
     loading.value = false
   }
@@ -140,32 +178,33 @@ async function logout() {
 // 5. 业务核心：处理支付 (Payment Flow)
 // ==========================================
 
-async function handlePayment(plan: string) {
+async function handlePayment(plan: string, period: PaymentPeriod) {
   loading.value = true
   error.value = ''
 
   try {
     // 直接请求资源，x402-axios 会自动处理 402 错误并进行支付
-    const res = await api.get(`/payment/${plan}`)
+    const res = await api.get(`/payment/${plan}/${period}`)
     handleSuccess(res)
 
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error('Payment failed or request error:', err)
-    // 用户拒绝或交易失败
-    if (err.code === 'ACTION_REJECTED' || err.cause?.code === 4001) {
+    // User rejected or transaction failed
+    const paymentErr = err as { code?: string; cause?: { code?: number }; response?: { data?: { error?: string } }; message?: string }
+    if (paymentErr.code === 'ACTION_REJECTED' || paymentErr.cause?.code === 4001) {
       error.value = 'You rejected the transaction.'
     } else {
-      error.value = err.response?.data?.error || err.message || 'Request failed'
+      error.value = paymentErr.response?.data?.error || paymentErr.message || 'Request failed'
     }
   } finally {
     loading.value = false
   }
 }
 
-function handleSuccess(res: any) {
+function handleSuccess(res: AxiosResponse) {
   const data = getResponseData(res)
   if (data && data.url) {
-    // 如果是资源链接，跳转
+    // If it's a resource link, redirect
     window.location.href = data.url
   } else {
     alert('Payment validated successfully! Resource is now accessible.')
@@ -192,13 +231,28 @@ onMounted(() => {
         <div v-else-if="user" class="content-box">
           <div class="user-badge">
             <span class="label">Connected:</span>
-            <span class="address">{{ user.publicAddress?.slice(0,6) }}...{{ user.publicAddress?.slice(-4) }}</span>
+            <span class="address">
+              {{ user.publicAddress?.slice(0,6) }}...{{ user.publicAddress?.slice(-4) }}</span>
           </div>
 
           <div class="actions">
-            <p>Unlock premium content for <strong>USDC (Base Sepolia)</strong></p>
+            <p>Select subscription period and pay with <strong>USDC (Base Sepolia)</strong></p>
 
-            <button @click="handlePayment('basic')" class="btn primary-btn">
+            <!-- Period Selector -->
+            <div class="period-selector">
+              <button
+                v-for="option in periodOptions"
+                :key="option.key"
+                @click="selectedPeriod = option.key"
+                :class="['period-btn', { active: selectedPeriod === option.key }]"
+              >
+                <span class="period-label">{{ option.label }}</span>
+                <span class="period-price">${{ option.price }}</span>
+                <span v-if="option.discount" class="period-discount">{{ option.discount }}</span>
+              </button>
+            </div>
+
+            <button @click="handlePayment('basic', selectedPeriod)" class="btn primary-btn">
               Pay & Access Resource
             </button>
 
@@ -222,28 +276,42 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* 基础重置与布局 */
-main { display: flex; justify-content: center; align-items: center; min-height: 100vh; width: 100%; background: #f0f2f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-.container { width: 100%; max-width: 480px; padding: 20px; }
+/* Base reset and layout */
+main {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  position: fixed;
+  top: 0;
+  left: 0;
+  background: #f0f2f5;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+.container { width: 100%; max-width: 600px; padding: 20px; }
 
-/* 卡片样式 */
+/* Card styles */
 .card { background: white; padding: 2rem; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); text-align: center; }
 h1 { margin: 0 0 0.5rem; color: #1a1a1a; font-size: 1.5rem; }
 .subtitle { margin: 0 0 2rem; color: #666; font-size: 0.9rem; }
 
-/* 按钮通用 */
+/* Button common styles */
 .btn { display: inline-block; padding: 0.8rem 1.5rem; border-radius: 8px; border: none; font-weight: 600; cursor: pointer; transition: all 0.2s; font-size: 1rem; width: 100%; margin-bottom: 0.5rem; }
 .primary-btn { background: #0052ff; color: white; } /* Base Brand Color */
 .primary-btn:hover { background: #0040d1; }
 .text-btn { background: transparent; color: #666; margin-top: 0.5rem; }
 .text-btn:hover { color: #333; background: #f5f5f5; }
 
-/* 用户信息 */
+/* User info */
 .user-badge { background: #f0f8ff; display: inline-block; padding: 0.5rem 1rem; border-radius: 20px; margin-bottom: 1.5rem; border: 1px solid #e0e0e0; }
 .label { color: #666; margin-right: 5px; font-size: 0.9rem; }
 .address { font-family: monospace; color: #333; font-weight: bold; }
 
-/* 错误提示 */
+/* Error message */
 .error-msg { margin-top: 1.5rem; padding: 0.8rem; background: #fff2f0; border: 1px solid #ffccc7; border-radius: 8px; color: #cf1322; font-size: 0.9rem; text-align: left; }
 
 /* Loading Spinner */
@@ -251,4 +319,35 @@ h1 { margin: 0 0 0.5rem; color: #1a1a1a; font-size: 1.5rem; }
 .spinner { width: 30px; height: 30px; border: 3px solid #f3f3f3; border-top: 3px solid #0052ff; border-radius: 50%; animation: spin 1s linear infinite; margin-bottom: 1rem; }
 
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+/* Period selector */
+.period-selector { display: flex; gap: 0.5rem; margin-bottom: 1rem; margin-top: 1rem; }
+.period-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.8rem 0.5rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 12px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+.period-btn:hover { border-color: #0052ff; background: #f0f8ff; }
+.period-btn.active { border-color: #0052ff; background: #e6f0ff; }
+.period-label { font-size: 0.85rem; color: #666; margin-bottom: 0.25rem; }
+.period-price { font-size: 1.1rem; font-weight: 700; color: #1a1a1a; }
+.period-discount {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  background: #ff4d4f;
+  color: white;
+  font-size: 0.65rem;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-weight: 600;
+}
 </style>
