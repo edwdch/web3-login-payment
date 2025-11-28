@@ -5,6 +5,7 @@ import { baseSepolia } from 'viem/chains'
 import { SiweMessage } from 'siwe'
 import axios, { type AxiosResponse } from 'axios'
 import { withPaymentInterceptor } from 'x402-axios'
+import AccessKeyManager from '@/components/AccessKeyManager.vue'
 
 // Ethereum provider type
 interface EthereumProvider {
@@ -219,54 +220,71 @@ onMounted(() => {
 <template>
   <main>
     <div class="container">
-      <div class="card">
-        <h1>x402 Payment Demo</h1>
-        <p class="subtitle">Decentralized Resource Access</p>
-
-        <div v-if="loading" class="status-box loading">
+      <div v-if="loading" class="card loading-card">
+        <div class="status-box loading">
           <div class="spinner"></div>
           <p>Processing transaction...</p>
         </div>
+      </div>
 
-        <div v-else-if="user" class="content-box">
-          <div class="user-badge">
-            <span class="label">Connected:</span>
-            <span class="address">
-              {{ user.publicAddress?.slice(0,6) }}...{{ user.publicAddress?.slice(-4) }}</span>
-          </div>
+      <div v-else-if="user" class="layout-wrapper">
+        <!-- Left Panel: Payment -->
+        <div class="card left-panel">
+          <h1>x402 Payment Demo</h1>
+          <p class="subtitle">Decentralized Resource Access</p>
 
-          <div class="actions">
-            <p>Select subscription period and pay with <strong>USDC (Base Sepolia)</strong></p>
-
-            <!-- Period Selector -->
-            <div class="period-selector">
-              <button
-                v-for="option in periodOptions"
-                :key="option.key"
-                @click="selectedPeriod = option.key"
-                :class="['period-btn', { active: selectedPeriod === option.key }]"
-              >
-                <span class="period-label">{{ option.label }}</span>
-                <span class="period-price">${{ option.price }}</span>
-                <span v-if="option.discount" class="period-discount">{{ option.discount }}</span>
-              </button>
+          <div class="content-box">
+            <div class="user-badge">
+              <span class="label">Connected:</span>
+              <span class="address">
+                {{ user.publicAddress?.slice(0,6) }}...{{ user.publicAddress?.slice(-4) }}</span>
             </div>
 
-            <button @click="handlePayment('basic', selectedPeriod)" class="btn primary-btn">
-              Pay & Access Resource
-            </button>
+            <div class="actions">
+              <p>Select subscription period and pay with <strong>USDC (Base Sepolia)</strong></p>
 
-            <button @click="logout" class="btn text-btn">Disconnect</button>
+              <!-- Period Selector -->
+              <div class="period-selector">
+                <button
+                  v-for="option in periodOptions"
+                  :key="option.key"
+                  @click="selectedPeriod = option.key"
+                  :class="['period-btn', { active: selectedPeriod === option.key }]"
+                >
+                  <span class="period-label">{{ option.label }}</span>
+                  <span class="period-price">${{ option.price }}</span>
+                  <span v-if="option.discount" class="period-discount">{{ option.discount }}</span>
+                </button>
+              </div>
+
+              <button @click="handlePayment('basic', selectedPeriod)" class="btn primary-btn">
+                Pay & Access Resource
+              </button>
+
+              <button @click="logout" class="btn text-btn">Disconnect</button>
+            </div>
+
+            <div v-if="error" class="error-msg">
+              ⚠️ {{ error }}
+            </div>
           </div>
         </div>
 
-        <div v-else class="login-box">
+        <!-- Right Panel: Access Key Manager -->
+        <div class="card right-panel">
+          <AccessKeyManager />
+        </div>
+      </div>
+
+      <div v-else class="card login-card">
+        <h1>x402 Payment Demo</h1>
+        <p class="subtitle">Decentralized Resource Access</p>
+        <div class="login-box">
           <p>Connect your wallet to continue</p>
           <button @click="connectAndLogin" class="btn primary-btn">
             Connect Wallet
           </button>
         </div>
-
         <div v-if="error" class="error-msg">
           ⚠️ {{ error }}
         </div>
@@ -280,22 +298,64 @@ onMounted(() => {
 main {
   display: flex;
   justify-content: center;
-  align-items: center;
+  align-items: flex-start;
   min-height: 100vh;
   width: 100vw;
-  height: 100vh;
   margin: 0;
-  padding: 0;
-  position: fixed;
-  top: 0;
-  left: 0;
+  padding: 2rem;
+  box-sizing: border-box;
   background: #f0f2f5;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  overflow-y: auto;
 }
-.container { width: 100%; max-width: 600px; padding: 20px; }
+
+.container {
+  width: 100%;
+  max-width: 1200px;
+}
+
+/* Layout wrapper for left-right panels */
+.layout-wrapper {
+  display: grid;
+  grid-template-columns: 400px 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
 
 /* Card styles */
-.card { background: white; padding: 2rem; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); text-align: center; }
+.card {
+  background: white;
+  padding: 2rem;
+  border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+}
+
+.left-panel {
+  text-align: center;
+  position: sticky;
+  top: 2rem;
+}
+
+.right-panel {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.right-panel :deep(.access-key-manager) {
+  margin-top: 0;
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+}
+
+.loading-card,
+.login-card {
+  max-width: 500px;
+  margin: 0 auto;
+  text-align: center;
+}
+
 h1 { margin: 0 0 0.5rem; color: #1a1a1a; font-size: 1.5rem; }
 .subtitle { margin: 0 0 2rem; color: #666; font-size: 0.9rem; }
 
@@ -349,5 +409,16 @@ h1 { margin: 0 0 0.5rem; color: #1a1a1a; font-size: 1.5rem; }
   padding: 2px 6px;
   border-radius: 10px;
   font-weight: 600;
+}
+
+/* Responsive: stack on smaller screens */
+@media (max-width: 900px) {
+  .layout-wrapper {
+    grid-template-columns: 1fr;
+  }
+
+  .left-panel {
+    position: static;
+  }
 }
 </style>
