@@ -257,7 +257,7 @@ onMounted(() => {
                 </button>
               </div>
 
-              <button @click="handlePayment('basic', selectedPeriod)" class="btn primary-btn">
+              <button @click="handlePayment('base', selectedPeriod)" class="btn primary-btn">
                 Pay & Access Resource
               </button>
 
