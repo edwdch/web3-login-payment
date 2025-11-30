@@ -29,8 +29,15 @@ const user = ref<User | null>(null)
 const loading = ref(false)
 const error = ref('')
 
-// Payment period config
+// Plan config
+type Plan = 'free' | 'base'
 type PaymentPeriod = 'monthly' | 'quarterly' | 'yearly'
+
+interface PlanOption {
+  key: Plan
+  label: string
+  description: string
+}
 
 interface PeriodOption {
   key: PaymentPeriod
@@ -40,12 +47,18 @@ interface PeriodOption {
   discount?: string
 }
 
+const planOptions: PlanOption[] = [
+  { key: 'free', label: 'Free', description: '14 days trial' },
+  { key: 'base', label: 'Basic', description: 'Full access' },
+]
+
 const periodOptions: PeriodOption[] = [
   { key: 'monthly', label: 'Monthly', price: '20.00', days: 30 },
   { key: 'quarterly', label: 'Quarterly', price: '54.00', days: 90, discount: '10% off' },
   { key: 'yearly', label: 'Yearly', price: '200.00', days: 365, discount: '17% off' },
 ]
 
+const selectedPlan = ref<Plan>('free')
 const selectedPeriod = ref<PaymentPeriod>('monthly')
 
 // API instance
@@ -179,13 +192,17 @@ async function logout() {
 // 5. 业务核心：处理支付 (Payment Flow)
 // ==========================================
 
-async function handlePayment(plan: string, period: PaymentPeriod) {
+async function handlePayment() {
   loading.value = true
   error.value = ''
 
   try {
     // 直接请求资源，x402-axios 会自动处理 402 错误并进行支付
-    const res = await api.get(`/payment/${plan}/${period}`)
+    // Free plan doesn't need period parameter
+    const url = selectedPlan.value === 'free'
+      ? '/payment/free'
+      : `/payment/${selectedPlan.value}/${selectedPeriod.value}`
+    const res = await api.get(url)
     handleSuccess(res)
 
   } catch (err: unknown) {
@@ -241,24 +258,40 @@ onMounted(() => {
             </div>
 
             <div class="actions">
-              <p>Select subscription period and pay with <strong>USDC (Base Sepolia)</strong></p>
+              <p>Select your plan</p>
 
-              <!-- Period Selector -->
-              <div class="period-selector">
+              <!-- Plan Selector -->
+              <div class="plan-selector">
                 <button
-                  v-for="option in periodOptions"
+                  v-for="option in planOptions"
                   :key="option.key"
-                  @click="selectedPeriod = option.key"
-                  :class="['period-btn', { active: selectedPeriod === option.key }]"
+                  @click="selectedPlan = option.key"
+                  :class="['plan-btn', { active: selectedPlan === option.key }]"
                 >
-                  <span class="period-label">{{ option.label }}</span>
-                  <span class="period-price">${{ option.price }}</span>
-                  <span v-if="option.discount" class="period-discount">{{ option.discount }}</span>
+                  <span class="plan-label">{{ option.label }}</span>
+                  <span class="plan-desc">{{ option.description }}</span>
                 </button>
               </div>
 
-              <button @click="handlePayment('base', selectedPeriod)" class="btn primary-btn">
-                Pay & Access Resource
+              <!-- Period Selector (only for paid plans) -->
+              <template v-if="selectedPlan !== 'free'">
+                <p class="period-title">Select subscription period and pay with <strong>USDC (Base Sepolia)</strong></p>
+                <div class="period-selector">
+                  <button
+                    v-for="option in periodOptions"
+                    :key="option.key"
+                    @click="selectedPeriod = option.key"
+                    :class="['period-btn', { active: selectedPeriod === option.key }]"
+                  >
+                    <span class="period-label">{{ option.label }}</span>
+                    <span class="period-price">${{ option.price }}</span>
+                    <span v-if="option.discount" class="period-discount">{{ option.discount }}</span>
+                  </button>
+                </div>
+              </template>
+
+              <button @click="handlePayment" class="btn primary-btn">
+                {{ selectedPlan === 'free' ? 'Start Free Trial' : 'Pay & Access Resource' }}
               </button>
 
               <button @click="logout" class="btn text-btn">Disconnect</button>
@@ -380,7 +413,27 @@ h1 { margin: 0 0 0.5rem; color: #1a1a1a; font-size: 1.5rem; }
 
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
+/* Plan selector */
+.plan-selector { display: flex; gap: 0.5rem; margin-bottom: 1rem; margin-top: 1rem; }
+.plan-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1rem 0.5rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 12px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.plan-btn:hover { border-color: #0052ff; background: #f0f8ff; }
+.plan-btn.active { border-color: #0052ff; background: #e6f0ff; }
+.plan-label { font-size: 1rem; font-weight: 700; color: #1a1a1a; margin-bottom: 0.25rem; }
+.plan-desc { font-size: 0.8rem; color: #666; }
+
 /* Period selector */
+.period-title { margin-top: 1.5rem; margin-bottom: 0; }
 .period-selector { display: flex; gap: 0.5rem; margin-bottom: 1rem; margin-top: 1rem; }
 .period-btn {
   flex: 1;
