@@ -49,7 +49,7 @@ interface PeriodOption {
 
 const planOptions: PlanOption[] = [
   { key: 'free', label: 'Free', description: '14 days trial' },
-  { key: 'base', label: 'Basic', description: 'Full access' },
+  { key: 'base', label: 'Base', description: 'Full access' },
 ]
 
 const periodOptions: PeriodOption[] = [
