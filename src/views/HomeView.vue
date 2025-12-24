@@ -30,8 +30,9 @@ const loading = ref(false)
 const error = ref('')
 
 // Plan config
-type Plan = 'free' | 'base'
+type Plan = 'free' | 'base' | 'pay-as-you-go'
 type PaymentPeriod = 'monthly' | 'quarterly' | 'yearly'
+type DataType = 'price' | 'sports' | 'weather' | 'politics'
 
 interface PlanOption {
   key: Plan
@@ -47,9 +48,15 @@ interface PeriodOption {
   discount?: string
 }
 
+interface DataTypeOption {
+  key: DataType
+  label: string
+}
+
 const planOptions: PlanOption[] = [
   { key: 'free', label: 'Free', description: '14 days trial' },
   { key: 'base', label: 'Base', description: 'Full access' },
+  { key: 'pay-as-you-go', label: 'Pay As You Go', description: 'Flexible' },
 ]
 
 const periodOptions: PeriodOption[] = [
@@ -58,8 +65,17 @@ const periodOptions: PeriodOption[] = [
   { key: 'yearly', label: 'Yearly', price: '200.00', days: 365, discount: '17% off' },
 ]
 
+const dataTypeOptions: DataTypeOption[] = [
+  { key: 'price', label: 'Price' },
+  { key: 'sports', label: 'Sports' },
+  { key: 'weather', label: 'Weather' },
+  { key: 'politics', label: 'Politics' },
+]
+
 const selectedPlan = ref<Plan>('free')
 const selectedPeriod = ref<PaymentPeriod>('monthly')
+const selectedDataType = ref<DataType>('price')
+const payAsYouGoAmount = ref<string>('10')
 
 // API instance
 const api = axios.create({
@@ -198,13 +214,29 @@ async function handlePayment() {
 
   try {
     // 直接请求资源，x402-axios 会自动处理 402 错误并进行支付
-    // Free plan doesn't need period parameter
-    const url = selectedPlan.value === 'free'
-      ? '/payment/free'
-      : `/payment/${selectedPlan.value}/${selectedPeriod.value}`
-    const res = await api.get(url)
-    handleSuccess(res)
+    let res: AxiosResponse
 
+    if (selectedPlan.value === 'free') {
+      // Free plan: GET with dataType query param
+      res = await api.get('/payment/free', { params: { dataType: selectedDataType.value } })
+    } else if (selectedPlan.value === 'pay-as-you-go') {
+      // Pay-as-you-go: POST with amount and dataType in body
+      const amount = parseFloat(payAsYouGoAmount.value)
+      if (isNaN(amount) || amount < 10) {
+        error.value = 'Minimum amount is $10'
+        loading.value = false
+        return
+      }
+      res = await api.post('/payment/pay-as-you-go/x402', {
+        amount: amount.toFixed(2),
+        dataType: selectedDataType.value,
+      })
+    } else {
+      // Subscription plan: GET with dataType, plan, period
+      res = await api.get(`/payment/${selectedDataType.value}/${selectedPlan.value}/${selectedPeriod.value}`)
+    }
+
+    handleSuccess(res)
   } catch (err: unknown) {
     console.error('Payment failed or request error:', err)
     // User rejected or transaction failed
@@ -273,8 +305,21 @@ onMounted(() => {
                 </button>
               </div>
 
-              <!-- Period Selector (only for paid plans) -->
-              <template v-if="selectedPlan !== 'free'">
+              <!-- Data Type Selector -->
+              <p class="section-title">Select data type</p>
+              <div class="data-type-selector">
+                <button
+                  v-for="option in dataTypeOptions"
+                  :key="option.key"
+                  @click="selectedDataType = option.key"
+                  :class="['data-type-btn', { active: selectedDataType === option.key }]"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
+
+              <!-- Period Selector (only for base plan) -->
+              <template v-if="selectedPlan === 'base'">
                 <p class="period-title">Select subscription period and pay with <strong>USDC (Base Sepolia)</strong></p>
                 <div class="period-selector">
                   <button
@@ -290,8 +335,25 @@ onMounted(() => {
                 </div>
               </template>
 
+              <!-- Pay-as-you-go Amount Input -->
+              <template v-if="selectedPlan === 'pay-as-you-go'">
+                <p class="period-title">Enter amount (min $10) and pay with <strong>USDC (Base Sepolia)</strong></p>
+                <div class="amount-input-wrapper">
+                  <span class="currency-symbol">$</span>
+                  <input
+                    v-model="payAsYouGoAmount"
+                    type="number"
+                    min="10"
+                    step="0.01"
+                    placeholder="10.00"
+                    class="amount-input"
+                  />
+                </div>
+                <p class="amount-hint">Valid for 1 year from payment</p>
+              </template>
+
               <button @click="handlePayment" class="btn primary-btn">
-                {{ selectedPlan === 'free' ? 'Start Free Trial' : 'Pay & Access Resource' }}
+                {{ selectedPlan === 'free' ? 'Start Free Trial' : selectedPlan === 'pay-as-you-go' ? `Pay $${payAsYouGoAmount}` : 'Pay & Access Resource' }}
               </button>
 
               <button @click="logout" class="btn text-btn">Disconnect</button>
@@ -463,6 +525,54 @@ h1 { margin: 0 0 0.5rem; color: #1a1a1a; font-size: 1.5rem; }
   border-radius: 10px;
   font-weight: 600;
 }
+
+/* Data type selector */
+.section-title { margin-top: 1rem; margin-bottom: 0; font-size: 0.9rem; }
+.data-type-selector { display: flex; gap: 0.5rem; margin-bottom: 1rem; margin-top: 0.5rem; flex-wrap: wrap; }
+.data-type-btn {
+  flex: 1;
+  min-width: 70px;
+  padding: 0.5rem 0.8rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #666;
+}
+.data-type-btn:hover { border-color: #0052ff; background: #f0f8ff; color: #0052ff; }
+.data-type-btn.active { border-color: #0052ff; background: #e6f0ff; color: #0052ff; }
+
+/* Amount input for pay-as-you-go */
+.amount-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 1rem 0;
+  padding: 0.8rem 1rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 12px;
+  background: white;
+  transition: border-color 0.2s;
+}
+.amount-input-wrapper:focus-within { border-color: #0052ff; }
+.currency-symbol { font-size: 1.2rem; font-weight: 600; color: #666; }
+.amount-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #1a1a1a;
+  background: transparent;
+}
+.amount-input::placeholder { color: #ccc; }
+.amount-input::-webkit-outer-spin-button,
+.amount-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.amount-input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+.amount-hint { font-size: 0.8rem; color: #666; margin: 0 0 1rem; }
 
 /* Responsive: stack on smaller screens */
 @media (max-width: 900px) {
