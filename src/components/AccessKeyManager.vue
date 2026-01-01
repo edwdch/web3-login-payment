@@ -1,6 +1,31 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import axios from 'axios'
+
+type PayType = 'subscription' | 'pay-as-you-go'
+type DataType = 'price' | 'sports' | 'weather' | 'politics'
+
+interface PayTypeOption {
+  key: PayType
+  label: string
+}
+
+interface DataTypeOption {
+  key: DataType
+  label: string
+}
+
+const payTypeOptions: PayTypeOption[] = [
+  { key: 'subscription', label: 'Subscription' },
+  { key: 'pay-as-you-go', label: 'Pay As You Go' },
+]
+
+const dataTypeOptions: DataTypeOption[] = [
+  { key: 'price', label: 'Price' },
+  { key: 'sports', label: 'Sports' },
+  { key: 'weather', label: 'Weather' },
+  { key: 'politics', label: 'Politics' },
+]
 
 interface AccessKey {
   id: number
@@ -42,6 +67,10 @@ const success = ref('')
 const keys = ref<AccessKey[]>([])
 const overview = ref<Omit<KeyListResponse, 'keys'> | null>(null)
 
+// Filter selections
+const selectedPayType = ref<PayType>('subscription')
+const selectedDataType = ref<DataType>('price')
+
 // Dialog states
 const showCreateDialog = ref(false)
 const showEditDialog = ref(false)
@@ -65,7 +94,14 @@ async function fetchKeys() {
   loading.value = true
   error.value = ''
   try {
-    const res = await api.get<{ data: KeyListResponse }>('/access-key')
+    const params: { payType: PayType; dataType?: DataType } = {
+      payType: selectedPayType.value,
+    }
+    // Only include dataType for subscription
+    if (selectedPayType.value === 'subscription') {
+      params.dataType = selectedDataType.value
+    }
+    const res = await api.get<{ data: KeyListResponse }>('/access-key', { params })
     const data = getResponseData(res)
     keys.value = data.keys
     overview.value = {
@@ -98,10 +134,21 @@ async function createKey() {
   loading.value = true
   error.value = ''
   try {
-    await api.post('/access-key', {
+    const payload: {
+      name: string
+      type: string
+      payType: PayType
+      dataType?: DataType
+    } = {
       name: newKeyName.value.trim(),
       type: newKeyType.value,
-    })
+      payType: selectedPayType.value,
+    }
+    // dataType is required when payType is 'subscription'
+    if (selectedPayType.value === 'subscription') {
+      payload.dataType = selectedDataType.value
+    }
+    await api.post('/access-key', payload)
     success.value = 'Key created successfully'
     showCreateDialog.value = false
     newKeyName.value = ''
@@ -190,6 +237,11 @@ function maskSecret(secret: string): string {
   return secret.slice(0, 4) + '••••••••' + secret.slice(-4)
 }
 
+// Watch for filter changes and refetch
+watch([selectedPayType, selectedDataType], () => {
+  fetchKeys()
+})
+
 onMounted(() => {
   fetchKeys()
 })
@@ -197,6 +249,36 @@ onMounted(() => {
 
 <template>
   <div class="access-key-manager">
+    <!-- Filter Selectors -->
+    <div class="filter-section">
+      <div class="filter-group">
+        <label class="filter-label">Pay Type</label>
+        <div class="filter-options">
+          <button
+            v-for="option in payTypeOptions"
+            :key="option.key"
+            @click="selectedPayType = option.key"
+            :class="['filter-btn', { active: selectedPayType === option.key }]"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+      </div>
+      <div v-if="selectedPayType === 'subscription'" class="filter-group">
+        <label class="filter-label">Data Type</label>
+        <div class="filter-options">
+          <button
+            v-for="option in dataTypeOptions"
+            :key="option.key"
+            @click="selectedDataType = option.key"
+            :class="['filter-btn', { active: selectedDataType === option.key }]"
+          >
+            {{ option.label }}
+          </button>
+        </div>
+      </div>
+    </div>
+
     <div class="section-header">
       <h2>🔑 Access Keys</h2>
       <button @click="showCreateDialog = true" class="btn create-btn">
@@ -340,6 +422,59 @@ onMounted(() => {
   background: #f8fafc;
   border-radius: 12px;
   text-align: left;
+}
+
+/* Filter Section */
+.filter-section {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.filter-group {
+  margin-bottom: 0.75rem;
+}
+
+.filter-group:last-child {
+  margin-bottom: 0;
+}
+
+.filter-label {
+  display: block;
+  font-size: 0.8rem;
+  color: #6b7280;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.filter-options {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.filter-btn {
+  padding: 0.4rem 0.8rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 6px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #666;
+}
+
+.filter-btn:hover {
+  border-color: #0052ff;
+  background: #f0f8ff;
+  color: #0052ff;
+}
+
+.filter-btn.active {
+  border-color: #0052ff;
+  background: #e6f0ff;
+  color: #0052ff;
 }
 
 .section-header {

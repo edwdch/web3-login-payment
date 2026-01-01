@@ -30,12 +30,19 @@ const loading = ref(false)
 const error = ref('')
 
 // Plan config
-type Plan = 'free' | 'base' | 'pay-as-you-go'
+type PaymentMode = 'subscription' | 'pay-as-you-go'
+type SubscriptionPlan = 'free' | 'base'
 type PaymentPeriod = 'monthly' | 'quarterly' | 'yearly'
 type DataType = 'price' | 'sports' | 'weather' | 'politics'
 
-interface PlanOption {
-  key: Plan
+interface PaymentModeOption {
+  key: PaymentMode
+  label: string
+  description: string
+}
+
+interface SubscriptionPlanOption {
+  key: SubscriptionPlan
   label: string
   description: string
 }
@@ -53,10 +60,22 @@ interface DataTypeOption {
   label: string
 }
 
-const planOptions: PlanOption[] = [
+type PayAsYouGoAmountEnum = 'NINETEEN' | 'NINETY_NINE' | 'TWO_HUNDRED_NINETY_NINE' | 'NINE_HUNDRED_NINETY_NINE'
+
+interface PayAsYouGoOption {
+  key: PayAsYouGoAmountEnum
+  label: string
+  price: string
+}
+
+const paymentModeOptions: PaymentModeOption[] = [
+  { key: 'subscription', label: 'Subscription', description: 'Monthly/Yearly plans' },
+  { key: 'pay-as-you-go', label: 'Pay As You Go', description: 'Flexible usage' },
+]
+
+const subscriptionPlanOptions: SubscriptionPlanOption[] = [
   { key: 'free', label: 'Free', description: '14 days trial' },
   { key: 'base', label: 'Base', description: 'Full access' },
-  { key: 'pay-as-you-go', label: 'Pay As You Go', description: 'Flexible' },
 ]
 
 const periodOptions: PeriodOption[] = [
@@ -72,10 +91,18 @@ const dataTypeOptions: DataTypeOption[] = [
   { key: 'politics', label: 'Politics' },
 ]
 
-const selectedPlan = ref<Plan>('free')
-const selectedPeriod = ref<PaymentPeriod>('monthly')
+const payAsYouGoOptions: PayAsYouGoOption[] = [
+  { key: 'NINETEEN', label: '$19', price: '19.00' },
+  { key: 'NINETY_NINE', label: '$99', price: '99.00' },
+  { key: 'TWO_HUNDRED_NINETY_NINE', label: '$299', price: '299.00' },
+  { key: 'NINE_HUNDRED_NINETY_NINE', label: '$999', price: '999.00' },
+]
+
 const selectedDataType = ref<DataType>('price')
-const payAsYouGoAmount = ref<string>('10')
+const selectedPaymentMode = ref<PaymentMode>('subscription')
+const selectedSubscriptionPlan = ref<SubscriptionPlan>('free')
+const selectedPeriod = ref<PaymentPeriod>('monthly')
+const selectedPayAsYouGoAmount = ref<PayAsYouGoAmountEnum>('NINETEEN')
 
 // API instance
 const api = axios.create({
@@ -216,24 +243,18 @@ async function handlePayment() {
     // 直接请求资源，x402-axios 会自动处理 402 错误并进行支付
     let res: AxiosResponse
 
-    if (selectedPlan.value === 'free') {
-      // Free plan: GET with dataType query param
-      res = await api.get('/payment/free', { params: { dataType: selectedDataType.value } })
-    } else if (selectedPlan.value === 'pay-as-you-go') {
-      // Pay-as-you-go: POST with amount and dataType in body
-      const amount = parseFloat(payAsYouGoAmount.value)
-      if (isNaN(amount) || amount < 10) {
-        error.value = 'Minimum amount is $10'
-        loading.value = false
-        return
-      }
+    if (selectedPaymentMode.value === 'pay-as-you-go') {
+      // Pay-as-you-go: POST with amountEnum and dataType in body
       res = await api.post('/payment/pay-as-you-go/x402', {
-        amount: amount.toFixed(2),
+        amountEnum: selectedPayAsYouGoAmount.value,
         dataType: selectedDataType.value,
       })
+    } else if (selectedSubscriptionPlan.value === 'free') {
+      // Free plan: POST with dataType in body
+      res = await api.post('/payment/free', { dataType: selectedDataType.value })
     } else {
-      // Subscription plan: GET with dataType, plan, period
-      res = await api.get(`/payment/${selectedDataType.value}/${selectedPlan.value}/${selectedPeriod.value}`)
+      // Subscription plan (base): GET with dataType, plan, period
+      res = await api.get(`/payment/${selectedDataType.value}/${selectedSubscriptionPlan.value}/${selectedPeriod.value}`)
     }
 
     handleSuccess(res)
@@ -290,23 +311,8 @@ onMounted(() => {
             </div>
 
             <div class="actions">
-              <p>Select your plan</p>
-
-              <!-- Plan Selector -->
-              <div class="plan-selector">
-                <button
-                  v-for="option in planOptions"
-                  :key="option.key"
-                  @click="selectedPlan = option.key"
-                  :class="['plan-btn', { active: selectedPlan === option.key }]"
-                >
-                  <span class="plan-label">{{ option.label }}</span>
-                  <span class="plan-desc">{{ option.description }}</span>
-                </button>
-              </div>
-
-              <!-- Data Type Selector -->
-              <p class="section-title">Select data type</p>
+              <!-- Step 1: Data Type Selector -->
+              <p class="section-title">1. Select data type</p>
               <div class="data-type-selector">
                 <button
                   v-for="option in dataTypeOptions"
@@ -318,42 +324,71 @@ onMounted(() => {
                 </button>
               </div>
 
-              <!-- Period Selector (only for base plan) -->
-              <template v-if="selectedPlan === 'base'">
-                <p class="period-title">Select subscription period and pay with <strong>USDC (Base Sepolia)</strong></p>
-                <div class="period-selector">
+              <!-- Step 2: Payment Mode Selector -->
+              <p class="section-title">2. Select payment mode</p>
+              <div class="plan-selector">
+                <button
+                  v-for="option in paymentModeOptions"
+                  :key="option.key"
+                  @click="selectedPaymentMode = option.key"
+                  :class="['plan-btn', { active: selectedPaymentMode === option.key }]"
+                >
+                  <span class="plan-label">{{ option.label }}</span>
+                  <span class="plan-desc">{{ option.description }}</span>
+                </button>
+              </div>
+
+              <!-- Step 3: Subscription Plan Selector (only for subscription mode) -->
+              <template v-if="selectedPaymentMode === 'subscription'">
+                <p class="section-title">3. Select plan</p>
+                <div class="plan-selector">
                   <button
-                    v-for="option in periodOptions"
+                    v-for="option in subscriptionPlanOptions"
                     :key="option.key"
-                    @click="selectedPeriod = option.key"
-                    :class="['period-btn', { active: selectedPeriod === option.key }]"
+                    @click="selectedSubscriptionPlan = option.key"
+                    :class="['plan-btn', { active: selectedSubscriptionPlan === option.key }]"
                   >
-                    <span class="period-label">{{ option.label }}</span>
-                    <span class="period-price">${{ option.price }}</span>
-                    <span v-if="option.discount" class="period-discount">{{ option.discount }}</span>
+                    <span class="plan-label">{{ option.label }}</span>
+                    <span class="plan-desc">{{ option.description }}</span>
                   </button>
                 </div>
+
+                <!-- Step 4: Period Selector (only for base plan) -->
+                <template v-if="selectedSubscriptionPlan === 'base'">
+                  <p class="period-title">4. Select subscription period and pay with <strong>USDC (Base Sepolia)</strong></p>
+                  <div class="period-selector">
+                    <button
+                      v-for="option in periodOptions"
+                      :key="option.key"
+                      @click="selectedPeriod = option.key"
+                      :class="['period-btn', { active: selectedPeriod === option.key }]"
+                    >
+                      <span class="period-label">{{ option.label }}</span>
+                      <span class="period-price">${{ option.price }}</span>
+                      <span v-if="option.discount" class="period-discount">{{ option.discount }}</span>
+                    </button>
+                  </div>
+                </template>
               </template>
 
-              <!-- Pay-as-you-go Amount Input -->
-              <template v-if="selectedPlan === 'pay-as-you-go'">
-                <p class="period-title">Enter amount (min $10) and pay with <strong>USDC (Base Sepolia)</strong></p>
-                <div class="amount-input-wrapper">
-                  <span class="currency-symbol">$</span>
-                  <input
-                    v-model="payAsYouGoAmount"
-                    type="number"
-                    min="10"
-                    step="0.01"
-                    placeholder="10.00"
-                    class="amount-input"
-                  />
+              <!-- Pay-as-you-go Amount Selector -->
+              <template v-if="selectedPaymentMode === 'pay-as-you-go'">
+                <p class="period-title">3. Select recharge amount and pay with <strong>USDC (Base Sepolia)</strong></p>
+                <div class="period-selector">
+                  <button
+                    v-for="option in payAsYouGoOptions"
+                    :key="option.key"
+                    @click="selectedPayAsYouGoAmount = option.key"
+                    :class="['period-btn', { active: selectedPayAsYouGoAmount === option.key }]"
+                  >
+                    <span class="period-price">{{ option.label }}</span>
+                  </button>
                 </div>
                 <p class="amount-hint">Valid for 1 year from payment</p>
               </template>
 
               <button @click="handlePayment" class="btn primary-btn">
-                {{ selectedPlan === 'free' ? 'Start Free Trial' : selectedPlan === 'pay-as-you-go' ? `Pay $${payAsYouGoAmount}` : 'Pay & Access Resource' }}
+                {{ selectedPaymentMode === 'pay-as-you-go' ? `Pay ${payAsYouGoOptions.find(o => o.key === selectedPayAsYouGoAmount)?.label}` : selectedSubscriptionPlan === 'free' ? 'Start Free Trial' : 'Pay & Access Resource' }}
               </button>
 
               <button @click="logout" class="btn text-btn">Disconnect</button>
